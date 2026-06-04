@@ -171,10 +171,15 @@ GUIDELINES:
       finalResponse = 'Could not find what you\'re looking for. Try being more specific.';
     }
 
-    // Parse dashboard filters from the response if possible
+    // Parse dashboard filters — extract the key search term from the query
     if (allResults.length > 0) {
       const types = [...new Set(allResults.map(r => r.asset_type))];
       if (types.length === 1) dashboardFilters.type = types[0];
+      
+      // Extract the most relevant search keyword from the user's message
+      // to apply as dashboard filter so the grid shows matching results
+      const searchTerms = extractSearchTerms(message);
+      if (searchTerms) dashboardFilters.query = searchTerms;
     }
 
     // Deduplicate results
@@ -203,6 +208,14 @@ GUIDELINES:
       return NextResponse.json({ error: error.message, response: 'Something went wrong.', results: [], total: 0 }, { status: 500 });
     }
   }
+}
+
+function extractSearchTerms(message) {
+  // Remove common stop words and extract the key search terms
+  const stopWords = new Set(['do', 'we', 'have', 'a', 'an', 'the', 'is', 'are', 'where', 'what', 'which', 'how', 'many', 'show', 'me', 'find', 'get', 'list', 'all', 'from', 'on', 'in', 'with', 'that', 'can', 'you', 'i', 'need', 'want', 'look', 'for', 'related', 'present', 'project', 'projects', 'app', 'apps', 'site', 'sites', 'deployed', 'our', 'any', 'there', 'does', 'exist']);
+  const words = message.toLowerCase().replace(/[^\w\s-]/g, '').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+  // Return the most meaningful terms (max 2)
+  return words.slice(0, 2).join(' ') || null;
 }
 
 async function fallbackSearch(col, message) {
