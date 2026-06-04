@@ -43,10 +43,10 @@ export default function Home() {
     setQuery(value);
   };
 
-  const instances = ['all', 'sharehealth', 'feno', 'shareland', 'instill', 'shareos', 'shareos_meetings', 'hamet_clawos', 'trevor_clawos', 'dexter_clawos'];
-  const types = ['all', 'dashboard', 'image', 'project', 'design', 'link'];
-  const typeIcons = { dashboard: '🖥️', image: '📸', project: '📁', design: '🎨', link: '🔗', s3_upload: '☁️' };
-  const instanceLabels = { all: 'All Instances', sharehealth: 'ShareHealth', feno: 'Feno', shareland: 'Shareland', instill: 'Instill', shareos: 'ShareOS', shareos_meetings: 'Meetings', hamet_clawos: 'Hamet', trevor_clawos: 'Trevor', dexter_clawos: 'Dexter' };
+  const instances = ['all', 'sharehealth', 'feno', 'shareland', 'instill', 'shareos', 'shareos_meetings', 'hamet_clawos', 'trevor_clawos', 'dexter_clawos', 'fleet'];
+  const types = ['all', 'vercel', 'dashboard', 'image', 'project', 'design', 'link'];
+  const typeIcons = { vercel: '▲', dashboard: '🖥️', image: '📸', project: '📁', design: '🎨', link: '🔗', s3_upload: '☁️' };
+  const instanceLabels = { all: 'All Instances', sharehealth: 'ShareHealth', feno: 'Feno', shareland: 'Shareland', instill: 'Instill', shareos: 'ShareOS', shareos_meetings: 'Meetings', hamet_clawos: 'Hamet', trevor_clawos: 'Trevor', dexter_clawos: 'Dexter', fleet: 'Fleet (All)' };
 
   return (
     <div style={{ background: '#09090B', color: '#FAFAFA', minHeight: '100vh', fontFamily: "'Inter', sans-serif", fontSize: '14px' }}>
