@@ -130,7 +130,7 @@ function parseIntent(msg) {
   const removeWords = /\b(show|me|find|search|list|get|what|are|where|is|look|for|give|need|can|you|all|the|from|on|in|with|that|have|has|do|we|any|our|a|an|vercel|image|images|dashboard|dashboards|project|projects|design|designs|deployed|deployments|custom|domain|domains|running|live|feno|instill|shareland|sharehealth|shareos|hamet|trevor|dexter|meetings|1440|celli|how|many|count|total|sites|apps|services)\b/gi;
   let query = msg.replace(removeWords, '').replace(/\s+/g, ' ').trim();
   
-  if (query.length > 2 && !intent.hasCustomDomain) {
+  if (query.length > 2 && !intent.hasCustomDomain && !intent.framework) {
     intent.query = query;
   }
 
