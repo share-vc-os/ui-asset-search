@@ -63,9 +63,9 @@ function parseIntent(msg) {
 
   // Type detection
   const typeMap = {
-    'vercel': ['vercel', 'deployed', 'deployment', 'live site', 'live sites', 'website', 'web app'],
-    'image': ['image', 'images', 'photo', 'photos', 'screenshot', 'png', 'jpg', 'picture', 'pictures', 'icon', 'icons', 'logo', 'logos'],
-    'dashboard': ['dashboard', 'dashboards', 'pm2', 'running', 'service', 'services', 'app running'],
+    'vercel': ['vercel', 'deployed', 'deployment', 'deployments', 'live site', 'live sites', 'website', 'web app', 'web apps'],
+    'image': ['image', 'images', 'photo', 'photos', 'screenshot', 'screenshots', 'png', 'jpg', 'picture', 'pictures', 'icon', 'icons', 'logo', 'logos', 'avatar'],
+    'dashboard': ['dashboard', 'dashboards', 'pm2', 'running service', 'services', 'app running', 'server'],
     'project': ['project', 'projects', 'repo', 'repos', 'repository', 'folder', 'codebase'],
     'design': ['design', 'designs', 'superdesign', 'ui design', 'mockup', 'wireframe', 'prototype'],
   };
@@ -79,16 +79,16 @@ function parseIntent(msg) {
 
   // Instance detection
   const instanceMap = {
-    'sharehealth': ['sharehealth', 'share health', 'health'],
+    'sharehealth': ['sharehealth', 'share health'],
     'feno': ['feno', 'dental', 'dentist'],
-    'shareland': ['shareland', 'share land', 'tycoon', 'gaming'],
+    'shareland': ['shareland', 'share land', 'tycoon'],
     'instill': ['instill', 'nike', 'culture'],
-    'shareos': ['shareos', 'share os', 'main'],
-    'shareos_meetings': ['meeting', 'meetings', 'workshop'],
+    'shareos': ['shareos', 'share os'],
+    'shareos_meetings': ['meeting', 'meetings'],
     'hamet_clawos': ['hamet'],
     'trevor_clawos': ['trevor'],
     'dexter_clawos': ['dexter'],
-    '1440': ['1440', 'coaching', 'wellness'],
+    '1440': ['1440', 'coaching'],
     'celli': ['celli'],
   };
 
@@ -100,19 +100,18 @@ function parseIntent(msg) {
   }
 
   // Custom domain detection
-  if (msg.includes('custom domain') || msg.includes('sharelabs') || msg.includes('.ai domain') || msg.includes('live url')) {
+  if (msg.includes('custom domain') || msg.includes('custom domains') || msg.includes('sharelabs') || msg.includes('.ai domain') || msg.includes('live url') || msg.includes('live urls')) {
     intent.hasCustomDomain = true;
+    // Don't also search for "custom domains" as a text query
   }
 
-  // Query extraction - remove type/instance keywords and extract the search term
-  let query = msg
-    .replace(/show me |find |search |list |get |what are |where is |look for |give me |i need |can you find /gi, '')
-    .replace(/all |the |from |on |in |with |that |have |has /gi, '')
-    .replace(/vercel|image|images|dashboard|project|design|deployed|feno|instill|shareland|sharehealth|shareos/gi, '')
-    .trim();
-  
-  if (query.length > 2) {
-    intent.query = query;
+  // Framework detection
+  const frameworks = ['nextjs', 'next.js', 'react', 'vue', 'svelte', 'nuxt', 'astro', 'remix'];
+  for (const fw of frameworks) {
+    if (msg.includes(fw)) {
+      intent.framework = fw.replace('.', '');
+      break;
+    }
   }
 
   // Count requests
@@ -121,8 +120,17 @@ function parseIntent(msg) {
   }
 
   // All results
-  if (msg.includes('all ')) {
+  if (msg.includes('all ') || msg.includes('every ') || msg.includes('list all')) {
     intent.limit = 60;
+  }
+
+  // Extract remaining search query - only if there's specific text to search for
+  // Remove known command words and filter terms
+  const removeWords = /\b(show|me|find|search|list|get|what|are|where|is|look|for|give|need|can|you|all|the|from|on|in|with|that|have|has|do|we|any|our|a|an|vercel|image|images|dashboard|dashboards|project|projects|design|designs|deployed|deployments|custom|domain|domains|running|live|feno|instill|shareland|sharehealth|shareos|hamet|trevor|dexter|meetings|1440|celli|how|many|count|total|sites|apps|services)\b/gi;
+  let query = msg.replace(removeWords, '').replace(/\s+/g, ' ').trim();
+  
+  if (query.length > 2 && !intent.hasCustomDomain) {
+    intent.query = query;
   }
 
   return intent;
@@ -134,6 +142,7 @@ function buildFilter(intent) {
   if (intent.type) filter.asset_type = intent.type;
   if (intent.instance) filter.instance = { $regex: intent.instance, $options: 'i' };
   if (intent.hasCustomDomain) filter['metadata.custom_domain'] = { $exists: true, $ne: null };
+  if (intent.framework) filter['metadata.framework'] = { $regex: intent.framework, $options: 'i' };
   
   if (intent.query) {
     filter.$or = [
