@@ -317,13 +317,14 @@ function ChatBot({ isOpen, onToggle, onApplyFilters }) {
         role: 'bot', 
         text: data.response || 'No results found.',
         filters: data.filters,
-        results: data.results?.slice(0, 5),
+        results: data.results?.slice(0, 8),
         total: data.total,
         suggestions: data.suggestions,
       }]);
 
-      // Auto-apply filters to the main dashboard
-      if (data.filters && Object.keys(data.filters).length > 0) {
+      // Only apply filters if the AI explicitly returns dashboard filters
+      // and there are actual results
+      if (data.filters && Object.keys(data.filters).length > 0 && data.total > 0) {
         onApplyFilters(data.filters);
       }
     } catch (e) {
