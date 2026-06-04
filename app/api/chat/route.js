@@ -13,12 +13,12 @@ async function getDb() {
 }
 
 /**
- * AI Chat endpoint — uses OpenAI to understand natural language,
- * generates MongoDB queries, and returns intelligent results.
+ * Agentic AI Chat — uses GPT-4o with tool calls to search the database.
+ * The agent can run multiple queries, refine searches, and provide intelligent answers.
  */
 export async function POST(request) {
   try {
-    const { message } = await request.json();
+    const { message, history = [] } = await request.json();
     if (!message) {
       return NextResponse.json({ error: 'No message provided' }, { status: 400 });
     }
@@ -26,102 +26,179 @@ export async function POST(request) {
     const db = await getDb();
     const col = db.collection('ui_assets_index');
 
-    // Get collection stats for context
-    const stats = await col.aggregate([
-      { $group: { _id: '$asset_type', count: { $sum: 1 } } }
-    ]).toArray();
-    const instanceStats = await col.aggregate([
-      { $group: { _id: '$instance', count: { $sum: 1 } } }
-    ]).toArray();
+    // Get quick stats for context
+    const total = await col.countDocuments({});
+    const typeStats = await col.aggregate([{ $group: { _id: '$asset_type', count: { $sum: 1 } } }]).toArray();
+    const instanceStats = await col.aggregate([{ $group: { _id: '$instance', count: { $sum: 1 } } }]).toArray();
 
-    const statsContext = stats.map(s => `${s._id}: ${s.count}`).join(', ');
-    const instanceContext = instanceStats.map(s => `${s._id}: ${s.count}`).join(', ');
+    const systemPrompt = `You are an AI agent for the Share Ventures Asset Explorer. You have access to a MongoDB collection with ${total} UI assets (Vercel deployments, images, dashboards, projects, designs) across ${instanceStats.length} instances.
 
-    // Call OpenAI to understand the intent and generate a MongoDB filter
-    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `You are an AI assistant for the Share Ventures Asset Explorer. You help users find UI assets (images, Vercel deployments, dashboards, projects, designs) across multiple OpenClaw instances.
+DATABASE STATS:
+Types: ${typeStats.map(t => `${t._id}(${t.count})`).join(', ')}
+Instances: ${instanceStats.map(i => `${i._id}(${i.count})`).join(', ')}
 
-DATABASE CONTEXT:
-- Collection: ui_assets_index
-- Asset types: ${statsContext}
-- Instances: ${instanceContext}
-- Fields: name, path, url, instance, asset_type, tags[], metadata.custom_domain, metadata.framework, metadata.all_aliases[], project_name, description
+SCHEMA: { name, path, url, instance, asset_type, tags[], metadata: {custom_domain, framework, all_aliases[], projectId}, project_name, description, last_seen }
 
-IMPORTANT RULES:
-1. Generate a MongoDB filter object that will ACTUALLY FIND results
-2. Use $regex with $options:"i" for fuzzy text matching
-3. PREFER searching by name/url/tags over filtering by instance — most Vercel projects are under "shareos" instance regardless of which venture they belong to
-4. For "meetings related" or "feno related" queries — search the NAME field with $regex, don't just filter by instance
-5. Use $or to search across multiple fields: name, url, project_name, metadata.custom_domain, tags
-6. "custom domain" means metadata.custom_domain: {$exists: true, $ne: null}
-7. Only filter by instance when user explicitly says "from sharehealth instance" or "on the feno server"
-8. Common frameworks stored: nextjs, vite, flask
-9. For broad queries, prefer simple $or regex searches that will return results
-10. NEVER generate filters that would return 0 results when a simpler regex would work
+You have a tool called "search_assets" to query the database. Use it to find what the user is looking for.
 
-EXAMPLES:
-- "meetings related vercel project" → {asset_type:"vercel", $or:[{name:{$regex:"meeting",$options:"i"}},{project_name:{$regex:"meeting",$options:"i"}}]}
-- "feno landing pages" → {$or:[{name:{$regex:"feno.*land",$options:"i"}},{name:{$regex:"land.*feno",$options:"i"}},{project_name:{$regex:"feno",$options:"i"}}]}  
-- "all projects with custom domains" → {asset_type:"vercel","metadata.custom_domain":{$exists:true,$ne:null}}
-- "brand images" → {asset_type:"image",name:{$regex:"brand",$options:"i"}}
+GUIDELINES:
+- Search broadly first, then narrow down
+- Use regex patterns to find partial matches
+- If one search returns 0 results, try alternative terms
+- For "deals" → search for "deal", for "dashboard" → also check "crm", "portal"
+- Vercel projects are web apps/sites — if user asks "do we have X", check vercel deployments
+- Always provide the URL/custom_domain if available
+- Be specific and helpful — show the user exactly what they need
+- If you can't find something, say so clearly and suggest alternatives`;
 
-RESPOND WITH JSON:
-{
-  "filter": { MongoDB filter object },
-  "response": "Natural language response explaining results",
-  "dashboardFilters": { "type": "vercel"|"image"|"dashboard"|"project"|"design" or null, "instance": null, "query": "the key search term" or null },
-  "limit": number (default 20, max 60)
-}`
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'search_assets',
+        description: 'Search the UI assets database with a MongoDB filter. Returns matching assets with name, type, instance, url, and custom domain.',
+        parameters: {
+          type: 'object',
+          properties: {
+            filter: {
+              type: 'object',
+              description: 'MongoDB filter object. Use $regex with $options:"i" for text search, $or for multi-field search. Example: {"$or":[{"name":{"$regex":"deal","$options":"i"}},{"tags":{"$regex":"deal","$options":"i"}}]}'
+            },
+            limit: { type: 'number', description: 'Max results to return (default 15)' },
+            sort: { type: 'object', description: 'Sort order, e.g. {"last_seen":-1}' }
           },
-          { role: 'user', content: message }
-        ],
-      }),
-    });
+          required: ['filter']
+        }
+      }
+    }];
 
-    if (!openaiRes.ok) {
-      // Fallback to basic search if OpenAI fails
-      return fallbackSearch(col, message);
+    // Build conversation messages
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history.slice(-4).map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text })),
+      { role: 'user', content: message }
+    ];
+
+    // Agent loop — allow up to 3 tool calls
+    let finalResponse = '';
+    let allResults = [];
+    let dashboardFilters = {};
+
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          temperature: 0,
+          tools,
+          messages,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('OpenAI error:', errText);
+        return fallbackSearch(col, message);
+      }
+
+      const data = await res.json();
+      const choice = data.choices[0];
+
+      if (choice.finish_reason === 'tool_calls') {
+        const toolCalls = choice.message.tool_calls;
+        messages.push(choice.message);
+
+        for (const tc of toolCalls) {
+          if (tc.function.name === 'search_assets') {
+            let args;
+            try {
+              args = JSON.parse(tc.function.arguments);
+            } catch (e) {
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Invalid JSON arguments' }) });
+              continue;
+            }
+
+            const filter = args.filter || {};
+            const limit = Math.min(args.limit || 15, 30);
+            const sort = args.sort || { last_seen: -1 };
+
+            try {
+              const [results, count] = await Promise.all([
+                col.find(filter).sort(sort).limit(limit).toArray(),
+                col.countDocuments(filter),
+              ]);
+
+              const cleaned = results.map(a => ({
+                name: a.name,
+                asset_type: a.asset_type,
+                instance: a.instance,
+                url: a.url,
+                custom_domain: a.metadata?.custom_domain || null,
+                framework: a.metadata?.framework || null,
+                path: a.path ? a.path.replace(/^\/home\/[^/]+\//, '~/') : null,
+                tags: a.tags?.slice(0, 5),
+              }));
+
+              allResults = [...allResults, ...cleaned];
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({ total: count, results: cleaned, showing: cleaned.length })
+              });
+            } catch (dbErr) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: dbErr.message, hint: 'Check filter syntax' })
+              });
+            }
+          }
+        }
+      } else {
+        // Final response
+        finalResponse = choice.message.content || '';
+        break;
+      }
     }
 
-    const aiData = await openaiRes.json();
-    const aiResponse = JSON.parse(aiData.choices[0].message.content);
+    // If no final response after loops
+    if (!finalResponse && allResults.length > 0) {
+      finalResponse = `Found ${allResults.length} relevant assets.`;
+    } else if (!finalResponse) {
+      finalResponse = 'Could not find what you\'re looking for. Try being more specific.';
+    }
 
-    // Execute the AI-generated filter
-    const filter = aiResponse.filter || {};
-    const limit = aiResponse.limit || 20;
+    // Parse dashboard filters from the response if possible
+    if (allResults.length > 0) {
+      const types = [...new Set(allResults.map(r => r.asset_type))];
+      if (types.length === 1) dashboardFilters.type = types[0];
+    }
 
-    const [assets, total] = await Promise.all([
-      col.find(filter).sort({ last_seen: -1 }).limit(limit).toArray(),
-      col.countDocuments(filter),
-    ]);
-
-    const cleaned = assets.map(a => { const { _id, ...rest } = a; return rest; });
+    // Deduplicate results
+    const seen = new Set();
+    const uniqueResults = allResults.filter(r => {
+      const key = `${r.name}-${r.instance}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
     return NextResponse.json({
-      response: aiResponse.response || `Found ${total} results.`,
-      filters: aiResponse.dashboardFilters || {},
-      results: cleaned,
-      total,
-      suggestions: generateSuggestions(message, total),
+      response: finalResponse,
+      filters: dashboardFilters,
+      results: uniqueResults.slice(0, 10),
+      total: uniqueResults.length,
+      suggestions: [],
     });
   } catch (error) {
-    // Fallback to basic search
+    console.error('Chat error:', error);
     try {
       const db = await getDb();
       const col = db.collection('ui_assets_index');
-      return fallbackSearch(col, (await request.clone().json()).message || '');
+      return fallbackSearch(col, message || '');
     } catch (e) {
       return NextResponse.json({ error: error.message, response: 'Something went wrong.', results: [], total: 0 }, { status: 500 });
     }
@@ -129,46 +206,36 @@ RESPOND WITH JSON:
 }
 
 async function fallbackSearch(col, message) {
-  // Simple regex search across all text fields
-  const searchTerms = message.replace(/[^\w\s-]/g, '').trim();
-  if (!searchTerms) {
+  const terms = message.replace(/[^\w\s-]/g, '').trim().split(/\s+/).filter(w => w.length > 2);
+  if (!terms.length) {
     return NextResponse.json({ response: 'Please provide a search query.', results: [], total: 0, filters: {} });
   }
 
-  const filter = {
-    $or: [
-      { name: { $regex: searchTerms, $options: 'i' } },
-      { path: { $regex: searchTerms, $options: 'i' } },
-      { url: { $regex: searchTerms, $options: 'i' } },
-      { project_name: { $regex: searchTerms, $options: 'i' } },
-      { 'metadata.custom_domain': { $regex: searchTerms, $options: 'i' } },
-      { tags: { $regex: searchTerms, $options: 'i' } },
-      { instance: { $regex: searchTerms, $options: 'i' } },
-    ],
-  };
+  // Search each word with OR across fields
+  const orConditions = terms.flatMap(term => [
+    { name: { $regex: term, $options: 'i' } },
+    { project_name: { $regex: term, $options: 'i' } },
+    { 'metadata.custom_domain': { $regex: term, $options: 'i' } },
+    { tags: { $regex: term, $options: 'i' } },
+  ]);
 
+  const filter = { $or: orConditions };
   const [assets, total] = await Promise.all([
-    col.find(filter).sort({ last_seen: -1 }).limit(20).toArray(),
+    col.find(filter).sort({ last_seen: -1 }).limit(15).toArray(),
     col.countDocuments(filter),
   ]);
 
-  const cleaned = assets.map(a => { const { _id, ...rest } = a; return rest; });
+  const cleaned = assets.map(a => ({
+    name: a.name, asset_type: a.asset_type, instance: a.instance,
+    url: a.url, custom_domain: a.metadata?.custom_domain || null,
+    framework: a.metadata?.framework || null, tags: a.tags?.slice(0, 5),
+  }));
 
   return NextResponse.json({
-    response: total > 0 ? `Found **${total}** results matching "${searchTerms}".` : `No results found for "${searchTerms}". Try different keywords.`,
+    response: total > 0 ? `Found **${total}** assets matching your query.` : `No results found. Try different keywords.`,
     filters: {},
     results: cleaned,
     total,
-    suggestions: ['Show all Vercel projects', 'Find images', 'List dashboards'],
+    suggestions: ['Show all Vercel projects', 'Find images', 'List custom domains'],
   });
-}
-
-function generateSuggestions(message, total) {
-  const suggestions = [];
-  if (total === 0) {
-    suggestions.push('Show all Vercel deployments', 'Find images from Feno', 'List all custom domains');
-  } else {
-    suggestions.push('Which have custom domains?', 'Show more from this instance', 'Find related designs');
-  }
-  return suggestions;
 }
