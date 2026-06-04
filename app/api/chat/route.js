@@ -105,11 +105,12 @@ function parseIntent(msg) {
     // Don't also search for "custom domains" as a text query
   }
 
-  // Framework detection
+  // Framework detection — if framework is mentioned, default to vercel type
   const frameworks = ['nextjs', 'next.js', 'react', 'vue', 'svelte', 'nuxt', 'astro', 'remix'];
   for (const fw of frameworks) {
     if (msg.includes(fw)) {
       intent.framework = fw.replace('.', '');
+      if (!intent.type) intent.type = 'vercel'; // frameworks are stored on vercel assets
       break;
     }
   }
