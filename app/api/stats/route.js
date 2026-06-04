@@ -2,49 +2,33 @@ import { MongoClient } from 'mongodb';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 30;
 
-const MONGO_URI = process.env.MONGODB_URI;
-
-let cachedClient = null;
-
-async function getClient() {
-  if (cachedClient) return cachedClient;
-  const client = new MongoClient(MONGO_URI, {
-    maxPoolSize: 5,
-    serverSelectionTimeoutMS: 10000,
-    connectTimeoutMS: 10000,
-  });
-  await client.connect();
-  cachedClient = client;
-  return client;
+let client = null;
+async function getDb() {
+  if (!client) {
+    client = new MongoClient(process.env.MONGODB_URI);
+    await client.connect();
+  }
+  return client.db('shareos');
 }
 
 export async function GET() {
   try {
-    const client = await getClient();
-    const db = client.db('shareos');
+    const db = await getDb();
     const col = db.collection('ui_assets_index');
 
-    const total = await col.countDocuments({});
-    
-    const byType = await col.aggregate([
-      { $group: { _id: '$asset_type', count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]).toArray();
+    const [total, typePipeline, instancePipeline] = await Promise.all([
+      col.countDocuments({}),
+      col.aggregate([{ $group: { _id: '$asset_type', count: { $sum: 1 } } }]).toArray(),
+      col.aggregate([{ $group: { _id: '$instance', count: { $sum: 1 } } }]).toArray(),
+    ]);
 
-    const byInstance = await col.aggregate([
-      { $group: { _id: '$instance', count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]).toArray();
+    const by_type = {};
+    typePipeline.forEach(t => { by_type[t._id] = t.count; });
+    const by_instance = {};
+    instancePipeline.forEach(i => { by_instance[i._id] = i.count; });
 
-    return NextResponse.json({
-      total,
-      by_type: Object.fromEntries(byType.map(r => [r._id, r.count])),
-      by_instance: Object.fromEntries(byInstance.map(r => [r._id, r.count]))
-    }, {
-      headers: { 'Cache-Control': 's-maxage=300, stale-while-revalidate=600' }
-    });
+    return NextResponse.json({ total, by_type, by_instance });
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

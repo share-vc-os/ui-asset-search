@@ -1,16 +1,17 @@
+import { Inter, JetBrains_Mono } from 'next/font/google';
+
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
+const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' });
+
 export const metadata = {
-  title: 'UI Asset Search — Share Ventures',
-  description: 'Cross-instance UI asset discovery and search',
+  title: 'Share Ventures — Asset Explorer',
+  description: 'Cross-instance UI asset discovery and search across the Share Ventures fleet',
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-      </head>
-      <body>{children}</body>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
+      <body style={{ margin: 0, padding: 0, background: '#09090B' }}>{children}</body>
     </html>
   );
 }
