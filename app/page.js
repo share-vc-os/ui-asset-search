@@ -252,14 +252,20 @@ export default function Home() {
   );
 }
 
+const IMAGE_PROXY = 'https://uiassetimages.loclx.io';
+
 function AssetCard({ asset, onImageClick }) {
   const isImage = asset.asset_type === 'image';
   const isVercel = asset.asset_type === 'vercel';
+  const isDesign = asset.asset_type === 'design';
   const customDomain = asset.metadata?.custom_domain;
-  const typeColors = { vercel: '#000', dashboard: '#22C55E', image: '#A78BFA', project: '#F59E0B', design: '#EC4899' };
+  const [imgError, setImgError] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(false);
   
-  // For images, try to construct a viewable URL
-  const imageUrl = isImage && asset.path ? null : asset.thumbnail_url;
+  // Build image URL from proxy
+  const imageUrl = isImage && asset.path && asset.instance
+    ? `${IMAGE_PROXY}/image?instance=${encodeURIComponent(asset.instance)}&path=${encodeURIComponent(asset.path)}`
+    : asset.thumbnail_url;
   
   return (
     <div style={{ background: '#18181B', border: '1px solid #3F3F46', borderRadius: 16, overflow: 'hidden', transition: 'border-color 0.2s', cursor: isImage ? 'pointer' : 'default' }}
@@ -268,13 +274,26 @@ function AssetCard({ asset, onImageClick }) {
     >
       {/* Image preview area */}
       {isImage && (
-        <div style={{ height: 140, background: '#27272A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}
-          onClick={() => imageUrl && onImageClick(imageUrl)}
+        <div style={{ height: 160, background: '#27272A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}
+          onClick={() => imageUrl && !imgError && onImageClick(imageUrl)}
         >
-          {imageUrl ? (
-            <img src={imageUrl} alt={asset.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {imageUrl && !imgError ? (
+            <>
+              {!imgLoaded && <span style={{ position: 'absolute', color: '#3F3F46', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>Loading...</span>}
+              <img 
+                src={imageUrl} 
+                alt={asset.name} 
+                loading="lazy"
+                onLoad={() => setImgLoaded(true)}
+                onError={() => setImgError(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.3s' }} 
+              />
+            </>
           ) : (
-            <span style={{ color: '#71717A', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", textAlign: 'center', padding: 8 }}>{asset.name}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 20, opacity: 0.3 }}>◫</span>
+              <span style={{ color: '#71717A', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", textAlign: 'center', padding: '0 8px', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asset.name}</span>
+            </div>
           )}
         </div>
       )}
