@@ -59,22 +59,30 @@ DATABASE CONTEXT:
 - Instances: ${instanceContext}
 - Fields: name, path, url, instance, asset_type, tags[], metadata.custom_domain, metadata.framework, metadata.all_aliases[], project_name, description
 
-RULES:
-1. Generate a MongoDB filter object that matches the user's intent
+IMPORTANT RULES:
+1. Generate a MongoDB filter object that will ACTUALLY FIND results
 2. Use $regex with $options:"i" for fuzzy text matching
-3. For searching across multiple fields, use $or
-4. The user might ask about specific ventures/companies — match by instance or name
-5. "meetings" relates to instance "shareos_meetings"
-6. "custom domain" means metadata.custom_domain exists and is not null
-7. Common frameworks: nextjs, vite, flask
-8. Return a natural language response explaining what you found
+3. PREFER searching by name/url/tags over filtering by instance — most Vercel projects are under "shareos" instance regardless of which venture they belong to
+4. For "meetings related" or "feno related" queries — search the NAME field with $regex, don't just filter by instance
+5. Use $or to search across multiple fields: name, url, project_name, metadata.custom_domain, tags
+6. "custom domain" means metadata.custom_domain: {$exists: true, $ne: null}
+7. Only filter by instance when user explicitly says "from sharehealth instance" or "on the feno server"
+8. Common frameworks stored: nextjs, vite, flask
+9. For broad queries, prefer simple $or regex searches that will return results
+10. NEVER generate filters that would return 0 results when a simpler regex would work
+
+EXAMPLES:
+- "meetings related vercel project" → {asset_type:"vercel", $or:[{name:{$regex:"meeting",$options:"i"}},{project_name:{$regex:"meeting",$options:"i"}}]}
+- "feno landing pages" → {$or:[{name:{$regex:"feno.*land",$options:"i"}},{name:{$regex:"land.*feno",$options:"i"}},{project_name:{$regex:"feno",$options:"i"}}]}  
+- "all projects with custom domains" → {asset_type:"vercel","metadata.custom_domain":{$exists:true,$ne:null}}
+- "brand images" → {asset_type:"image",name:{$regex:"brand",$options:"i"}}
 
 RESPOND WITH JSON:
 {
   "filter": { MongoDB filter object },
-  "response": "Natural language response",
-  "dashboardFilters": { "type": "vercel"|"image"|etc or null, "instance": "instance_name" or null, "query": "search text" or null },
-  "limit": number (default 20)
+  "response": "Natural language response explaining results",
+  "dashboardFilters": { "type": "vercel"|"image"|"dashboard"|"project"|"design" or null, "instance": null, "query": "the key search term" or null },
+  "limit": number (default 20, max 60)
 }`
           },
           { role: 'user', content: message }
