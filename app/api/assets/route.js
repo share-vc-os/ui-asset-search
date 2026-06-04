@@ -1,6 +1,8 @@
 import { MongoClient } from 'mongodb';
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://shareOS:JVq0EKBopGmMfUx3@shareos.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000&appName=mongosh+2.3.8";
 
 let client;
