@@ -15,6 +15,9 @@ export default function Home() {
   const [viewMode, setViewMode] = useState('grid');
   const [lightbox, setLightbox] = useState(null);
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
   const limit = 60;
   const debounceRef = useRef(null);
 
@@ -48,7 +51,7 @@ export default function Home() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedQuery(query), 300);
+    debounceRef.current = setTimeout(() => setDebouncedQuery(query), 250);
     return () => clearTimeout(debounceRef.current);
   }, [query]);
 
@@ -77,6 +80,33 @@ export default function Home() {
 
   const totalPages = Math.ceil(total / limit);
 
+  // Apply filters from AI chat
+  const applyFilters = (filters) => {
+    if (filters.type) setType(filters.type);
+    if (filters.instance) setInstance(filters.instance);
+    if (filters.query) setQuery(filters.query);
+  };
+
+  // Sync handler
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+      setSyncMsg(data.message || 'Sync started');
+      // Refresh stats after delay
+      setTimeout(() => {
+        fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {});
+        fetchAssets();
+        setSyncMsg('');
+      }, 5000);
+    } catch (e) {
+      setSyncMsg('Sync triggered');
+    }
+    setSyncing(false);
+  };
+
   return (
     <div className="app">
       {/* Lightbox */}
@@ -87,6 +117,9 @@ export default function Home() {
         </div>
       )}
 
+      {/* AI Chat Bot */}
+      <ChatBot isOpen={chatOpen} onToggle={() => setChatOpen(!chatOpen)} onApplyFilters={applyFilters} />
+
       {/* Header */}
       <header className="header">
         <div className="header-left">
@@ -95,9 +128,14 @@ export default function Home() {
           <span className="page-title">Asset Explorer</span>
         </div>
         <div className="header-right">
+          {syncMsg && <span className="sync-msg">{syncMsg}</span>}
+          <button className={`sync-btn ${syncing ? 'syncing' : ''}`} onClick={handleSync} disabled={syncing}>
+            <span className="sync-icon">⟳</span>
+            {syncing ? 'Syncing...' : 'Sync'}
+          </button>
           {stats && (
             <span className="badge mono">
-              {stats.total?.toLocaleString()} assets indexed
+              {stats.total?.toLocaleString()} assets
             </span>
           )}
         </div>
@@ -127,7 +165,7 @@ export default function Home() {
           </svg>
           <input
             type="text"
-            placeholder="Search by name, URL, domain, path..."
+            placeholder="Search by name, URL, domain, path, tag..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="search-input"
@@ -177,18 +215,24 @@ export default function Home() {
             {loading ? 'Loading...' : `${total.toLocaleString()} results`}
             {!loading && total > limit && ` • Page ${page} of ${totalPages}`}
           </span>
-          {instance !== 'all' && (
-            <button className="clear-filter" onClick={() => setInstance('all')}>
-              ✕ {instances.find(i => i.key === instance)?.label}
-            </button>
-          )}
+          <div className="active-filters">
+            {type !== 'all' && (
+              <button className="clear-filter" onClick={() => setType('all')}>✕ {type}</button>
+            )}
+            {instance !== 'all' && (
+              <button className="clear-filter" onClick={() => setInstance('all')}>
+                ✕ {instances.find(i => i.key === instance)?.label}
+              </button>
+            )}
+            {query && (
+              <button className="clear-filter" onClick={() => setQuery('')}>✕ &quot;{query}&quot;</button>
+            )}
+          </div>
         </div>
 
         {/* Content */}
         {loading ? (
-          <div className="loading">
-            <div className="spinner" />
-          </div>
+          <div className="loading"><div className="spinner" /></div>
         ) : assets.length === 0 ? (
           <div className="empty">
             <div className="empty-icon">∅</div>
@@ -204,10 +248,10 @@ export default function Home() {
         ) : (
           <div className="list">
             <div className="list-header">
-              <span className="list-col-type">Type</span>
-              <span className="list-col-instance">Instance</span>
-              <span className="list-col-name">Name</span>
-              <span className="list-col-url">URL / Domain</span>
+              <span>Type</span>
+              <span>Instance</span>
+              <span>Name</span>
+              <span>URL / Domain</span>
             </div>
             {assets.map((a, i) => (
               <AssetRow key={`${a.instance}-${a.name}-${i}`} asset={a} onImageClick={setLightbox} />
@@ -218,29 +262,15 @@ export default function Home() {
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="pagination">
-            <button
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
-              className="page-btn"
-            >← Prev</button>
-            
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="page-btn">← Prev</button>
             {generatePageNumbers(page, totalPages).map((p, i) => (
               p === '...' ? (
                 <span key={`dots-${i}`} className="page-dots">...</span>
               ) : (
-                <button
-                  key={p}
-                  onClick={() => setPage(p)}
-                  className={`page-btn ${page === p ? 'active' : ''}`}
-                >{p}</button>
+                <button key={p} onClick={() => setPage(p)} className={`page-btn ${page === p ? 'active' : ''}`}>{p}</button>
               )
             ))}
-            
-            <button
-              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-              className="page-btn"
-            >Next →</button>
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="page-btn">Next →</button>
           </div>
         )}
       </main>
@@ -250,19 +280,139 @@ export default function Home() {
   );
 }
 
+/* ============ AI CHAT BOT ============ */
+function ChatBot({ isOpen, onToggle, onApplyFilters }) {
+  const [messages, setMessages] = useState([
+    { role: 'bot', text: 'Hey! I can help you find assets across all instances. Try asking:\n• "Show me all Vercel deployments with custom domains"\n• "Find images from Feno"\n• "How many dashboards are running?"\n• "Search for anything related to 1440"' }
+  ]);
+  const [input, setInput] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    if (isOpen) inputRef.current?.focus();
+  }, [isOpen]);
+
+  const sendMessage = async () => {
+    if (!input.trim() || thinking) return;
+    const userMsg = input.trim();
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setThinking(true);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMsg }),
+      });
+      const data = await res.json();
+      
+      setMessages(prev => [...prev, { 
+        role: 'bot', 
+        text: data.response || 'No results found.',
+        filters: data.filters,
+        results: data.results?.slice(0, 5),
+        total: data.total,
+        suggestions: data.suggestions,
+      }]);
+
+      // Auto-apply filters to the main dashboard
+      if (data.filters && Object.keys(data.filters).length > 0) {
+        onApplyFilters(data.filters);
+      }
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'bot', text: 'Something went wrong. Try again.' }]);
+    }
+    setThinking(false);
+  };
+
+  return (
+    <>
+      {/* Floating Button */}
+      <button className="chat-fab" onClick={onToggle}>
+        {isOpen ? '✕' : '✦'}
+      </button>
+
+      {/* Chat Panel */}
+      {isOpen && (
+        <div className="chat-panel">
+          <div className="chat-header">
+            <span className="chat-title">✦ Asset AI</span>
+            <span className="chat-subtitle">Ask anything about your assets</span>
+          </div>
+          
+          <div className="chat-messages">
+            {messages.map((msg, i) => (
+              <div key={i} className={`chat-msg ${msg.role}`}>
+                <div className="chat-msg-text">
+                  {msg.text.split('\n').map((line, j) => <p key={j}>{line}</p>)}
+                </div>
+                {msg.results && msg.results.length > 0 && (
+                  <div className="chat-results">
+                    {msg.results.map((r, j) => (
+                      <a key={j} href={r.url || '#'} target="_blank" rel="noopener noreferrer" className="chat-result-item">
+                        <span className="chat-result-type">{r.asset_type}</span>
+                        <span className="chat-result-name">{r.name}</span>
+                        {r.metadata?.custom_domain && <span className="chat-result-domain">{r.metadata.custom_domain}</span>}
+                      </a>
+                    ))}
+                    {msg.total > 5 && <div className="chat-more">+{msg.total - 5} more results shown in dashboard →</div>}
+                  </div>
+                )}
+                {msg.suggestions && msg.suggestions.length > 0 && (
+                  <div className="chat-suggestions">
+                    {msg.suggestions.map((s, j) => (
+                      <button key={j} className="chat-suggestion" onClick={() => { setInput(s); }}>{s}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {thinking && (
+              <div className="chat-msg bot">
+                <div className="chat-thinking">●●●</div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="chat-input-area">
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Ask about your assets..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+              className="chat-input"
+            />
+            <button onClick={sendMessage} disabled={!input.trim() || thinking} className="chat-send">→</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ============ HELPERS ============ */
 function generatePageNumbers(current, total) {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
   const pages = [];
   pages.push(1);
   if (current > 3) pages.push('...');
-  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
-    pages.push(i);
-  }
+  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
   if (current < total - 2) pages.push('...');
   pages.push(total);
   return pages;
 }
 
+/* ============ ASSET CARD ============ */
 function AssetCard({ asset, onImageClick }) {
   const isImage = asset.asset_type === 'image';
   const isVercel = asset.asset_type === 'vercel';
@@ -277,30 +427,25 @@ function AssetCard({ asset, onImageClick }) {
     : asset.thumbnail_url;
 
   const typeColors = { 
-    vercel: { bg: 'rgba(250,250,250,0.06)', text: '#FAFAFA', icon: '▲' },
-    dashboard: { bg: 'rgba(34,197,94,0.1)', text: '#22C55E', icon: '◻' },
-    image: { bg: 'rgba(167,139,250,0.1)', text: '#A78BFA', icon: '◫' },
-    project: { bg: 'rgba(245,158,11,0.1)', text: '#F59E0B', icon: '⊡' },
-    design: { bg: 'rgba(236,72,153,0.1)', text: '#EC4899', icon: '◈' },
+    vercel: { bg: 'rgba(250,250,250,0.06)', text: '#FAFAFA' },
+    dashboard: { bg: 'rgba(34,197,94,0.1)', text: '#22C55E' },
+    image: { bg: 'rgba(167,139,250,0.1)', text: '#A78BFA' },
+    project: { bg: 'rgba(245,158,11,0.1)', text: '#F59E0B' },
+    design: { bg: 'rgba(236,72,153,0.1)', text: '#EC4899' },
   };
   const tc = typeColors[asset.asset_type] || typeColors.project;
 
   return (
     <div className="card" onClick={() => isImage && imageUrl && !imgError && onImageClick(imageUrl)}>
-      {/* Preview area */}
+      {/* Preview */}
       {isImage && (
         <div className="card-preview">
           {imageUrl && !imgError ? (
             <>
               {!imgLoaded && <div className="card-preview-loading">⏳</div>}
-              <img 
-                src={imageUrl}
-                alt={asset.name}
-                loading="lazy"
-                onLoad={() => setImgLoaded(true)}
-                onError={() => setImgError(true)}
-                className={`card-img ${imgLoaded ? 'loaded' : ''}`}
-              />
+              <img src={imageUrl} alt={asset.name} loading="lazy"
+                onLoad={() => setImgLoaded(true)} onError={() => setImgError(true)}
+                className={`card-img ${imgLoaded ? 'loaded' : ''}`} />
             </>
           ) : (
             <div className="card-preview-placeholder">
@@ -310,86 +455,52 @@ function AssetCard({ asset, onImageClick }) {
           )}
         </div>
       )}
-
       {isVercel && (
         <div className="card-preview card-preview-vercel">
           <span style={{ fontSize: 28, opacity: 0.8 }}>▲</span>
-          {asset.metadata?.framework && (
-            <span className="framework-badge">{asset.metadata.framework}</span>
-          )}
+          {asset.metadata?.framework && <span className="framework-badge">{asset.metadata.framework}</span>}
         </div>
       )}
+      {isDashboard && <div className="card-preview card-preview-dashboard"><span style={{ fontSize: 24 }}>◻</span></div>}
+      {isDesign && <div className="card-preview card-preview-design"><span style={{ fontSize: 24 }}>◈</span></div>}
 
-      {isDashboard && (
-        <div className="card-preview card-preview-dashboard">
-          <span style={{ fontSize: 24 }}>◻</span>
-        </div>
-      )}
-
-      {isDesign && (
-        <div className="card-preview card-preview-design">
-          <span style={{ fontSize: 24 }}>◈</span>
-        </div>
-      )}
-
-      {/* Card body */}
+      {/* Body */}
       <div className="card-body">
         <div className="card-meta">
-          <span className="type-badge" style={{ background: tc.bg, color: tc.text }}>
-            {tc.icon} {asset.asset_type}
-          </span>
+          <span className="type-badge" style={{ background: tc.bg, color: tc.text }}>{asset.asset_type}</span>
           <span className="instance-badge">{asset.instance}</span>
         </div>
-
         <div className="card-name">
-          {asset.url ? (
-            <a href={asset.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{asset.name}</a>
-          ) : asset.name}
+          {asset.url ? <a href={asset.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>{asset.name}</a> : asset.name}
         </div>
-
         {customDomain && (
           <a href={`https://${customDomain}`} target="_blank" rel="noopener noreferrer" className="custom-domain" onClick={e => e.stopPropagation()}>
             🌐 {customDomain}
           </a>
         )}
-
         {!customDomain && asset.path && (
-          <div className="card-path">
-            {asset.path.replace(/^\/home\/[^/]+\//, '~/')}
-          </div>
-        )}
-
-        {asset.metadata?.framework && !isVercel && (
-          <span className="framework-tag">{asset.metadata.framework}</span>
+          <div className="card-path">{asset.path.replace(/^\/home\/[^/]+\//, '~/')}</div>
         )}
       </div>
     </div>
   );
 }
 
-function AssetRow({ asset, onImageClick }) {
+/* ============ ASSET ROW ============ */
+function AssetRow({ asset }) {
   const customDomain = asset.metadata?.custom_domain;
-  const typeColors = { 
-    vercel: '#FAFAFA', dashboard: '#22C55E', image: '#A78BFA', 
-    project: '#F59E0B', design: '#EC4899' 
-  };
+  const typeColors = { vercel: '#FAFAFA', dashboard: '#22C55E', image: '#A78BFA', project: '#F59E0B', design: '#EC4899' };
   
   return (
     <div className="list-row">
-      <span className="list-type" style={{ color: typeColors[asset.asset_type] || '#A1A1AA' }}>
-        {asset.asset_type}
-      </span>
+      <span className="list-type" style={{ color: typeColors[asset.asset_type] || '#A1A1AA' }}>{asset.asset_type}</span>
       <span className="list-instance">{asset.instance}</span>
       <span className="list-name">
-        {asset.url ? (
-          <a href={asset.url} target="_blank" rel="noopener noreferrer">{asset.name}</a>
-        ) : asset.name}
+        {asset.url ? <a href={asset.url} target="_blank" rel="noopener noreferrer">{asset.name}</a> : asset.name}
       </span>
       <span className="list-url">
         {customDomain ? (
-          <a href={`https://${customDomain}`} target="_blank" rel="noopener noreferrer" className="domain-link">
-            {customDomain}
-          </a>
+          <a href={`https://${customDomain}`} target="_blank" rel="noopener noreferrer" className="domain-link">{customDomain}</a>
         ) : asset.url ? (
           <a href={asset.url} target="_blank" rel="noopener noreferrer" className="url-link">↗</a>
         ) : (
@@ -400,228 +511,176 @@ function AssetRow({ asset, onImageClick }) {
   );
 }
 
+/* ============ STYLES ============ */
 const styles = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  
-  .app {
-    min-height: 100vh;
-    background: #09090B;
-    color: #FAFAFA;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  }
+  .app { min-height: 100vh; background: #09090B; color: #FAFAFA; font-family: 'Inter', -apple-system, sans-serif; }
 
   /* Header */
-  .header {
-    border-bottom: 1px solid #27272A;
-    padding: 18px 32px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: rgba(9, 9, 11, 0.95);
-    backdrop-filter: blur(8px);
-  }
+  .header { border-bottom: 1px solid #27272A; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; background: rgba(9,9,11,0.96); backdrop-filter: blur(8px); }
   .header-left { display: flex; align-items: center; gap: 10px; }
-  .header-right { display: flex; align-items: center; gap: 16px; }
-  .logo { font-size: 18px; font-weight: 600; letter-spacing: -0.03em; }
-  .divider { color: #3F3F46; font-size: 18px; font-weight: 300; }
-  .page-title { color: #A1A1AA; font-size: 14px; font-weight: 400; }
-  .badge { 
-    font-family: 'JetBrains Mono', monospace; font-size: 11px; 
-    color: #A1A1AA; background: #27272A; padding: 4px 10px; border-radius: 8px; 
-  }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 17px; font-weight: 600; letter-spacing: -0.03em; }
+  .divider { color: #3F3F46; font-size: 16px; }
+  .page-title { color: #A1A1AA; font-size: 13px; }
+  .badge { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #A1A1AA; background: #27272A; padding: 4px 10px; border-radius: 8px; }
   .mono { font-family: 'JetBrains Mono', monospace; }
 
+  /* Sync */
+  .sync-btn { display: flex; align-items: center; gap: 5px; background: #18181B; border: 1px solid #3F3F46; border-radius: 8px; padding: 6px 12px; color: #A1A1AA; font-size: 12px; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+  .sync-btn:hover { border-color: #71717A; color: #FAFAFA; }
+  .sync-btn.syncing { opacity: 0.6; cursor: wait; }
+  .sync-btn.syncing .sync-icon { animation: spin 1s linear infinite; }
+  .sync-msg { font-size: 11px; color: #22C55E; font-family: 'JetBrains Mono', monospace; }
+
   /* Main */
-  .main { max-width: 1440px; margin: 0 auto; padding: 28px 24px; }
+  .main { max-width: 1440px; margin: 0 auto; padding: 24px 24px; }
 
   /* Stats */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
-    margin-bottom: 28px;
-  }
-  .stat-card {
-    background: #18181B;
-    border: 1px solid #3F3F46;
-    border-radius: 14px;
-    padding: 14px 18px;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
-    color: inherit;
-  }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 24px; }
+  .stat-card { background: #18181B; border: 1px solid #3F3F46; border-radius: 12px; padding: 12px 16px; text-align: left; cursor: pointer; transition: all 0.15s; font-family: inherit; color: inherit; }
   .stat-card:hover { border-color: #71717A; }
   .stat-card.active { border-color: #FAFAFA; background: #1a1a1f; }
-  .stat-label { 
-    font-family: 'JetBrains Mono', monospace; font-size: 10px; 
-    color: #71717A; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; 
-  }
-  .stat-value { font-size: 22px; font-weight: 600; letter-spacing: -0.03em; }
+  .stat-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #71717A; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+  .stat-value { font-size: 20px; font-weight: 600; letter-spacing: -0.03em; }
 
   /* Search */
-  .search-container { position: relative; margin-bottom: 16px; }
-  .search-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #71717A; }
-  .search-input {
-    width: 100%; background: #18181B; border: 1px solid #3F3F46; border-radius: 12px;
-    padding: 13px 40px 13px 44px; color: #FAFAFA; font-size: 14px; outline: none;
-    transition: border-color 0.2s; font-family: inherit;
-  }
+  .search-container { position: relative; margin-bottom: 14px; }
+  .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #71717A; }
+  .search-input { width: 100%; background: #18181B; border: 1px solid #3F3F46; border-radius: 11px; padding: 12px 36px 12px 40px; color: #FAFAFA; font-size: 13px; outline: none; transition: border-color 0.2s; font-family: inherit; }
   .search-input:focus { border-color: #2563EB; }
-  .search-input::placeholder { color: #71717A; }
-  .search-clear {
-    position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-    background: #27272A; border: none; color: #A1A1AA; width: 22px; height: 22px;
-    border-radius: 6px; cursor: pointer; font-size: 11px; display: flex; align-items: center; justify-content: center;
-  }
+  .search-input::placeholder { color: #52525B; }
+  .search-clear { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: #27272A; border: none; color: #A1A1AA; width: 20px; height: 20px; border-radius: 5px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; }
 
   /* Filters */
-  .filter-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-  .filter-types { display: flex; gap: 6px; flex-wrap: wrap; }
-  .filter-btn {
-    background: #18181B; color: #A1A1AA; border: 1px solid #3F3F46; border-radius: 10px;
-    padding: 7px 12px; font-size: 12px; font-weight: 500; cursor: pointer;
-    transition: all 0.15s; display: flex; align-items: center; gap: 5px; font-family: inherit;
-  }
+  .filter-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  .filter-types { display: flex; gap: 5px; flex-wrap: wrap; }
+  .filter-btn { background: #18181B; color: #A1A1AA; border: 1px solid #3F3F46; border-radius: 9px; padding: 6px 11px; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 4px; font-family: inherit; }
   .filter-btn:hover { border-color: #71717A; color: #FAFAFA; }
   .filter-btn.active { background: #FAFAFA; color: #09090B; border-color: #FAFAFA; }
-  .filter-icon { font-size: 11px; }
-  .filter-count { font-family: 'JetBrains Mono', monospace; font-size: 10px; opacity: 0.6; }
-  .filter-actions { display: flex; gap: 8px; align-items: center; }
-  .instance-select {
-    background: #18181B; border: 1px solid #3F3F46; border-radius: 10px;
-    padding: 7px 12px; color: #A1A1AA; font-size: 12px; cursor: pointer; font-family: inherit;
-  }
+  .filter-icon { font-size: 10px; }
+  .filter-count { font-family: 'JetBrains Mono', monospace; font-size: 9px; opacity: 0.6; }
+  .filter-actions { display: flex; gap: 6px; align-items: center; }
+  .instance-select { background: #18181B; border: 1px solid #3F3F46; border-radius: 9px; padding: 6px 10px; color: #A1A1AA; font-size: 11px; cursor: pointer; font-family: inherit; }
   .instance-select option { background: #18181B; color: #FAFAFA; }
-  .view-toggle { display: flex; border: 1px solid #3F3F46; border-radius: 10px; overflow: hidden; }
-  .view-toggle button {
-    background: #18181B; color: #71717A; border: none; padding: 7px 11px;
-    cursor: pointer; font-size: 13px; transition: all 0.15s;
-  }
+  .view-toggle { display: flex; border: 1px solid #3F3F46; border-radius: 9px; overflow: hidden; }
+  .view-toggle button { background: #18181B; color: #71717A; border: none; padding: 6px 10px; cursor: pointer; font-size: 12px; }
   .view-toggle button.active { background: #27272A; color: #FAFAFA; }
 
-  /* Results bar */
-  .results-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-  .results-count { font-size: 12px; color: #71717A; }
-  .clear-filter {
-    font-size: 11px; color: #A1A1AA; background: #27272A; border: 1px solid #3F3F46;
-    border-radius: 8px; padding: 3px 8px; cursor: pointer; font-family: inherit;
-  }
+  /* Results */
+  .results-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .results-count { font-size: 11px; color: #71717A; }
+  .active-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .clear-filter { font-size: 10px; color: #A1A1AA; background: #27272A; border: 1px solid #3F3F46; border-radius: 6px; padding: 2px 7px; cursor: pointer; font-family: inherit; }
 
   /* Loading / Empty */
   .loading { display: flex; justify-content: center; padding: 80px; }
-  .spinner { width: 28px; height: 28px; border: 2px solid #3F3F46; border-top-color: #FAFAFA; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  .spinner { width: 24px; height: 24px; border: 2px solid #3F3F46; border-top-color: #FAFAFA; border-radius: 50%; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .empty { text-align: center; padding: 80px 20px; color: #71717A; }
-  .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
-  .empty-title { font-size: 15px; font-weight: 500; }
-  .empty-sub { font-size: 12px; margin-top: 4px; }
+  .empty-icon { font-size: 36px; margin-bottom: 10px; opacity: 0.4; }
+  .empty-title { font-size: 14px; font-weight: 500; }
+  .empty-sub { font-size: 11px; margin-top: 3px; }
 
   /* Grid */
-  .grid { display: grid; gap: 10px; }
-  .grid-default { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-  .grid-images { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .grid { display: grid; gap: 8px; }
+  .grid-default { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .grid-images { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 
   /* Card */
-  .card {
-    background: #18181B; border: 1px solid #3F3F46; border-radius: 14px;
-    overflow: hidden; transition: border-color 0.2s, transform 0.15s;
-  }
-  .card:hover { border-color: #71717A; transform: translateY(-1px); }
-  .card-preview {
-    height: 140px; background: #111113; display: flex; align-items: center;
-    justify-content: center; overflow: hidden; position: relative; border-bottom: 1px solid #27272A;
-  }
-  .card-preview-vercel { background: #000; height: 52px; }
-  .card-preview-dashboard { background: linear-gradient(135deg, #0a1a0a 0%, #111 100%); height: 52px; }
-  .card-preview-design { background: linear-gradient(135deg, #1a0a1a 0%, #111 100%); height: 52px; }
-  .card-preview-loading { position: absolute; font-size: 14px; opacity: 0.3; }
+  .card { background: #18181B; border: 1px solid #3F3F46; border-radius: 12px; overflow: hidden; transition: border-color 0.2s, transform 0.1s; }
+  .card:hover { border-color: #52525B; transform: translateY(-1px); }
+  .card-preview { height: 130px; background: #111113; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; border-bottom: 1px solid #27272A; }
+  .card-preview-vercel { background: #000; height: 48px; }
+  .card-preview-dashboard { background: linear-gradient(135deg, #071a07 0%, #111 100%); height: 48px; }
+  .card-preview-design { background: linear-gradient(135deg, #1a071a 0%, #111 100%); height: 48px; }
+  .card-preview-loading { position: absolute; font-size: 12px; opacity: 0.3; }
   .card-img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.3s; }
   .card-img.loaded { opacity: 1; }
-  .card-preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  .placeholder-icon { font-size: 20px; opacity: 0.2; }
-  .placeholder-name { 
-    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #71717A;
-    max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center;
-  }
-  .framework-badge {
-    position: absolute; bottom: 8px; right: 8px;
-    font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #A1A1AA;
-    background: rgba(39, 39, 42, 0.9); padding: 2px 6px; border-radius: 4px;
-  }
-  .card-body { padding: 12px 14px; }
-  .card-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-  .type-badge {
-    font-family: 'JetBrains Mono', monospace; font-size: 9px; padding: 2px 7px;
-    border-radius: 5px; text-transform: uppercase; letter-spacing: 0.02em; font-weight: 500;
-  }
-  .instance-badge { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #71717A; }
-  .card-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+  .card-preview-placeholder { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .placeholder-icon { font-size: 18px; opacity: 0.15; }
+  .placeholder-name { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #52525B; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .framework-badge { position: absolute; bottom: 6px; right: 6px; font-family: 'JetBrains Mono', monospace; font-size: 8px; color: #A1A1AA; background: rgba(39,39,42,0.9); padding: 2px 5px; border-radius: 3px; }
+  .card-body { padding: 10px 12px; }
+  .card-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .type-badge { font-family: 'JetBrains Mono', monospace; font-size: 9px; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; }
+  .instance-badge { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #52525B; }
+  .card-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
   .card-name a { color: #FAFAFA; text-decoration: none; }
   .card-name a:hover { color: #2563EB; }
-  .custom-domain {
-    display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px;
-    color: #22C55E; text-decoration: none; margin-bottom: 4px;
-  }
+  .custom-domain { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #22C55E; text-decoration: none; }
   .custom-domain:hover { text-decoration: underline; }
-  .card-path {
-    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #52525B;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .framework-tag {
-    display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 9px;
-    color: #A1A1AA; background: #27272A; padding: 2px 6px; border-radius: 4px; margin-top: 4px;
-  }
+  .card-path { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #3F3F46; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* List view */
-  .list { border: 1px solid #3F3F46; border-radius: 14px; overflow: hidden; }
-  .list-header {
-    display: grid; grid-template-columns: 80px 100px 1fr 180px;
-    padding: 10px 16px; background: #18181B; border-bottom: 1px solid #3F3F46;
-    font-size: 11px; color: #71717A; font-weight: 500; text-transform: uppercase;
-    letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;
-  }
-  .list-row {
-    display: grid; grid-template-columns: 80px 100px 1fr 180px;
-    padding: 10px 16px; border-bottom: 1px solid #1a1a1f; align-items: center;
-    transition: background 0.1s;
-  }
+  /* List */
+  .list { border: 1px solid #3F3F46; border-radius: 12px; overflow: hidden; }
+  .list-header { display: grid; grid-template-columns: 70px 90px 1fr 160px; padding: 8px 14px; background: #18181B; border-bottom: 1px solid #3F3F46; font-size: 10px; color: #52525B; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace; }
+  .list-row { display: grid; grid-template-columns: 70px 90px 1fr 160px; padding: 8px 14px; border-bottom: 1px solid #1a1a1f; align-items: center; transition: background 0.1s; }
   .list-row:hover { background: #18181B; }
   .list-row:last-child { border-bottom: none; }
-  .list-type { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; }
-  .list-instance { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #71717A; }
-  .list-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list-type { font-family: 'JetBrains Mono', monospace; font-size: 9px; text-transform: uppercase; }
+  .list-instance { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #52525B; }
+  .list-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .list-name a { color: #FAFAFA; text-decoration: none; }
   .list-name a:hover { color: #2563EB; }
   .list-url { text-align: right; }
-  .domain-link { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #22C55E; text-decoration: none; }
+  .domain-link { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #22C55E; text-decoration: none; }
   .domain-link:hover { text-decoration: underline; }
-  .url-link { color: #2563EB; text-decoration: none; font-size: 14px; }
-  .path-text { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #52525B; }
+  .url-link { color: #2563EB; text-decoration: none; font-size: 13px; }
+  .path-text { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #3F3F46; }
 
   /* Pagination */
-  .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 32px; align-items: center; flex-wrap: wrap; }
-  .page-btn {
-    background: #18181B; border: 1px solid #3F3F46; border-radius: 8px;
-    padding: 7px 12px; min-width: 34px; color: #A1A1AA; font-size: 12px;
-    cursor: pointer; font-family: inherit; font-weight: 400; transition: all 0.15s;
-  }
+  .pagination { display: flex; justify-content: center; gap: 5px; margin-top: 28px; align-items: center; flex-wrap: wrap; }
+  .page-btn { background: #18181B; border: 1px solid #3F3F46; border-radius: 7px; padding: 6px 10px; min-width: 32px; color: #A1A1AA; font-size: 11px; cursor: pointer; font-family: inherit; transition: all 0.15s; }
   .page-btn:hover:not(:disabled) { border-color: #71717A; color: #FAFAFA; }
   .page-btn.active { background: #FAFAFA; color: #09090B; border-color: #FAFAFA; font-weight: 600; }
   .page-btn:disabled { color: #3F3F46; cursor: default; }
-  .page-dots { color: #71717A; font-size: 12px; padding: 0 4px; }
+  .page-dots { color: #52525B; font-size: 11px; }
 
   /* Lightbox */
-  .lightbox {
-    position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.94);
-    display: flex; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px;
-  }
-  .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 10px; object-fit: contain; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
-  .lightbox-close { position: absolute; top: 20px; right: 24px; color: #FAFAFA; font-size: 20px; opacity: 0.7; }
+  .lightbox { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.95); display: flex; align-items: center; justify-content: center; cursor: zoom-out; padding: 20px; }
+  .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; object-fit: contain; }
+  .lightbox-close { position: absolute; top: 16px; right: 20px; color: #FAFAFA; font-size: 18px; opacity: 0.6; }
+
+  /* Chat Bot */
+  .chat-fab { position: fixed; bottom: 24px; right: 24px; width: 52px; height: 52px; border-radius: 50%; background: #FAFAFA; color: #09090B; border: none; font-size: 20px; cursor: pointer; z-index: 1000; box-shadow: 0 4px 20px rgba(0,0,0,0.4); transition: transform 0.2s, background 0.2s; display: flex; align-items: center; justify-content: center; }
+  .chat-fab:hover { transform: scale(1.08); background: #E4E4E7; }
+
+  .chat-panel { position: fixed; bottom: 88px; right: 24px; width: 380px; max-height: 520px; background: #18181B; border: 1px solid #3F3F46; border-radius: 16px; z-index: 1000; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+  .chat-header { padding: 14px 16px; border-bottom: 1px solid #27272A; }
+  .chat-title { font-size: 14px; font-weight: 600; display: block; }
+  .chat-subtitle { font-size: 11px; color: #71717A; }
+
+  .chat-messages { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; max-height: 340px; }
+  .chat-msg { max-width: 92%; }
+  .chat-msg.user { align-self: flex-end; }
+  .chat-msg.bot { align-self: flex-start; }
+  .chat-msg-text { padding: 8px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+  .chat-msg.user .chat-msg-text { background: #2563EB; color: #FFF; }
+  .chat-msg.bot .chat-msg-text { background: #27272A; color: #E4E4E7; }
+  .chat-msg-text p { margin-bottom: 4px; }
+  .chat-msg-text p:last-child { margin-bottom: 0; }
+  .chat-thinking { padding: 8px 12px; background: #27272A; border-radius: 10px; font-size: 12px; color: #71717A; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+
+  .chat-results { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .chat-result-item { display: flex; gap: 6px; align-items: center; padding: 4px 8px; background: #1a1a1f; border-radius: 6px; text-decoration: none; font-size: 11px; }
+  .chat-result-item:hover { background: #27272A; }
+  .chat-result-type { font-family: 'JetBrains Mono', monospace; font-size: 8px; color: #71717A; text-transform: uppercase; min-width: 50px; }
+  .chat-result-name { color: #FAFAFA; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-result-domain { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #22C55E; }
+  .chat-more { font-size: 10px; color: #71717A; padding: 4px 8px; }
+
+  .chat-suggestions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chat-suggestion { font-size: 10px; background: #27272A; border: 1px solid #3F3F46; color: #A1A1AA; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-family: inherit; }
+  .chat-suggestion:hover { border-color: #71717A; color: #FAFAFA; }
+
+  .chat-input-area { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #27272A; }
+  .chat-input { flex: 1; background: #27272A; border: 1px solid #3F3F46; border-radius: 8px; padding: 8px 12px; color: #FAFAFA; font-size: 12px; outline: none; font-family: inherit; }
+  .chat-input:focus { border-color: #2563EB; }
+  .chat-input::placeholder { color: #52525B; }
+  .chat-send { background: #FAFAFA; color: #09090B; border: none; border-radius: 8px; width: 34px; cursor: pointer; font-size: 14px; font-weight: 600; transition: opacity 0.15s; }
+  .chat-send:disabled { opacity: 0.3; cursor: default; }
 
   /* Links */
   a { color: #2563EB; text-decoration: none; }
@@ -630,20 +689,22 @@ const styles = `
 
   /* Responsive */
   @media (max-width: 768px) {
-    .header { padding: 14px 16px; }
-    .main { padding: 20px 16px; }
+    .header { padding: 12px 16px; }
+    .main { padding: 16px 14px; }
     .stats-grid { grid-template-columns: repeat(3, 1fr); }
     .filter-bar { flex-direction: column; align-items: stretch; }
     .filter-types { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
     .filter-actions { justify-content: space-between; }
-    .grid-default { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
-    .grid-images { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-    .list-header, .list-row { grid-template-columns: 60px 80px 1fr 120px; font-size: 10px; }
+    .grid-default { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+    .grid-images { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .list-header, .list-row { grid-template-columns: 55px 70px 1fr 100px; }
+    .chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 80px; }
   }
   @media (max-width: 480px) {
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
     .grid-default { grid-template-columns: 1fr; }
     .grid-images { grid-template-columns: repeat(2, 1fr); }
-    .logo { font-size: 16px; }
+    .logo { font-size: 15px; }
+    .header-right .badge { display: none; }
   }
 `;
